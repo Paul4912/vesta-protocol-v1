@@ -48,15 +48,35 @@ contract ActivePool is
 	mapping(address => uint256) internal VSTDebts;
 	mapping(address => uint256) internal assetsStaked;
 
-	address private stakingAdmin;
 	ICollStakingManager public collStakingManager;
 
-	modifier onlyStakingAdmin {
-		require(msg.sender == stakingAdmin, "ActivePool: not a staking admin");
+	modifier callerIsBorrowerOperationOrDefaultPool() {
+		require(
+			msg.sender == borrowerOperationsAddress || msg.sender == address(defaultPool),
+			"ActivePool: Caller is neither BO nor Default Pool"
+		);
+
 		_;
 	}
 
-	// --- Contract setters ---
+	modifier callerIsBOorTroveMorSP() {
+		require(
+			msg.sender == borrowerOperationsAddress ||
+				msg.sender == troveManagerAddress ||
+				stabilityPoolManager.isStabilityPool(msg.sender),
+			"ActivePool: Caller is neither BorrowerOperations nor TroveManager nor StabilityPool"
+		);
+		_;
+	}
+
+	modifier callerIsBOorTroveM() {
+		require(
+			msg.sender == borrowerOperationsAddress || msg.sender == troveManagerAddress,
+			"ActivePool: Caller is neither BorrowerOperations nor TroveManager"
+		);
+
+		_;
+	}
 
 	function setAddresses(
 		address _borrowerOperationsAddress,
@@ -90,26 +110,19 @@ contract ActivePool is
 		renounceOwnership();
 	}
 
-	function setStakingAdminAddress(address _stakingAdminAddress) external {
-		require(stakingAdmin == address(0) || stakingAdmin == msg.sender, 
-			"ActivePool: staking admin already initialized and call is not an admin");
-
-		stakingAdmin = _stakingAdminAddress;
+	function recoverOwnership(address _admin) external {
+		require(owner() == address(0), "Owership already recovered");
+		_transferOwnership(_admin);
 	}
 
-	function setCollStakingManagerAddress(address _collStakingManagerAddress) external onlyStakingAdmin {
+	function setCollStakingManagerAddress(address _collStakingManagerAddress)
+		external
+		onlyOwner
+	{
 		checkContract(_collStakingManagerAddress);
-
 		collStakingManager = ICollStakingManager(_collStakingManagerAddress);
 	}
 
-	// --- Getters for public variables. Required by IPool interface ---
-
-	/*
-	 * Returns the ETH state variable.
-	 *
-	 *Not necessarily equal to the the contract's raw ETH balance - ether can be forcibly sent to contracts.
-	 */
 	function getAssetBalance(address _asset) external view override returns (uint256) {
 		return assetsBalance[_asset];
 	}
@@ -121,8 +134,6 @@ contract ActivePool is
 	function getVSTDebt(address _asset) external view override returns (uint256) {
 		return VSTDebts[_asset];
 	}
-
-	// --- Pool functionality ---
 
 	function sendAsset(
 		address _asset,
@@ -182,36 +193,6 @@ contract ActivePool is
 		emit ActivePoolVSTDebtUpdated(_asset, VSTDebts[_asset]);
 	}
 
-	// --- 'require' functions ---
-
-	modifier callerIsBorrowerOperationOrDefaultPool() {
-		require(
-			msg.sender == borrowerOperationsAddress || msg.sender == address(defaultPool),
-			"ActivePool: Caller is neither BO nor Default Pool"
-		);
-
-		_;
-	}
-
-	modifier callerIsBOorTroveMorSP() {
-		require(
-			msg.sender == borrowerOperationsAddress ||
-				msg.sender == troveManagerAddress ||
-				stabilityPoolManager.isStabilityPool(msg.sender),
-			"ActivePool: Caller is neither BorrowerOperations nor TroveManager nor StabilityPool"
-		);
-		_;
-	}
-
-	modifier callerIsBOorTroveM() {
-		require(
-			msg.sender == borrowerOperationsAddress || msg.sender == troveManagerAddress,
-			"ActivePool: Caller is neither BorrowerOperations nor TroveManager"
-		);
-
-		_;
-	}
-
 	function receivedERC20(address _asset, uint256 _amount)
 		external
 		override
@@ -224,35 +205,42 @@ contract ActivePool is
 		emit ActivePoolAssetBalanceUpdated(_asset, assetsBalance[_asset]);
 	}
 
-	function forceStake(address _asset) external onlyStakingAdmin {
+	function forceStake(address _asset) external onlyOwner {
 		_stakeCollateral(_asset, IERC20Upgradeable(_asset).balanceOf(address(this)));
 	}
 
-	function forceUnstake(address _asset) external onlyStakingAdmin {
+	function forceUnstake(address _asset) external onlyOwner {
 		_unstakeCollateral(_asset, assetsStaked[_asset]);
 	}
 
 	function _stakeCollateral(address _asset, uint256 _amount) internal {
-		if (address(collStakingManager) != address(0) && collStakingManager.isSupportedAsset(_asset)) {
-			
-			if (IERC20Upgradeable(_asset).allowance(address(this), address(collStakingManager)) < _amount) {
-				IERC20Upgradeable(_asset).safeApprove(address(collStakingManager), type(uint256).max);
-			}
+		address collStakingManagerAddress = address(collStakingManager);
 
-			try collStakingManager.stakeCollaterals(_asset, _amount) {
-				assetsStaked[_asset] += _amount;
-			} catch {}
+		if (
+			collStakingManagerAddress == address(0) || !collStakingManager.isSupportedAsset(_asset)
+		) {
+			return;
 		}
+
+		IERC20Upgradeable erc20Asset = IERC20Upgradeable(_asset);
+
+		if (erc20Asset.allowance(address(this), collStakingManagerAddress) < _amount) {
+			erc20Asset.safeApprove(collStakingManagerAddress, type(uint256).max);
+		}
+
+		try collStakingManager.stakeCollaterals(_asset, _amount) {
+			assetsStaked[_asset] += _amount;
+		} catch {}
 	}
 
 	function _unstakeCollateral(address _asset, uint256 _amount) internal {
-		if (address(collStakingManager) != address(0)) {
-			assetsStaked[_asset] -= _amount;
-			collStakingManager.unstakeCollaterals(_asset, _amount);
+		if (address(collStakingManager) == address(0)) {
+			return;
 		}
-	}
 
-	// --- Fallback function ---
+		assetsStaked[_asset] -= _amount;
+		collStakingManager.unstakeCollaterals(_asset, _amount);
+	}
 
 	receive() external payable callerIsBorrowerOperationOrDefaultPool {
 		assetsBalance[ETH_REF_ADDRESS] = assetsBalance[ETH_REF_ADDRESS].add(msg.value);

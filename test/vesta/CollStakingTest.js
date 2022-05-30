@@ -17,7 +17,7 @@ contract('CollStakingManager', async accounts => {
   const assertRevert = th.assertRevert
 
   const [owner, user] = accounts;
-  
+
   let activePool
   let mockBorrowerOperations
   let collStakingManager
@@ -25,7 +25,7 @@ contract('CollStakingManager', async accounts => {
 
   describe("ActivePool Contract Test for staking collaterals", async () => {
     beforeEach(async () => {
-      
+
       collStakingManager = await CollStakingManagerMock.new()
       activePool = await ActivePool.new()
       mockBorrowerOperations = await NonPayable.new()
@@ -38,21 +38,21 @@ contract('CollStakingManager', async accounts => {
       await collateral.mint(owner, dec(100, 18))
       await collStakingManager.setSupportedTokens(collateral.address, true)
 
-      await activePool.setStakingAdminAddress(owner)
+      await activePool.recoverOwnership(owner)
       await activePool.setCollStakingManagerAddress(collStakingManager.address)
     })
 
-    it("ActivePool: setStakingAdminAddress(), other addresses can not call it once it is initialized", async () => {
-      await assertRevert(activePool.setStakingAdminAddress(owner, {from: user}));
+    it("ActivePool: recoverOwnership(), other addresses can not call it once it is initialized", async () => {
+      await assertRevert(activePool.recoverOwnership(owner, { from: user }));
     })
 
-    it("ActivePool: setStakingAdminAddress(), staking admin can set new admin", async () => {
-      const tx = await activePool.setStakingAdminAddress(owner);
-      assert.isTrue(tx.receipt.status)
+    it("ActivePool: recoverOwnership(), staking admin can set new admin", async () => {
+      const ow = await activePool.owner();
+      assert.isTrue(ow == owner)
     })
-    
+
     it("ActivePool: setCollStakingManagerAddress() can be called by admin only", async () => {
-      await assertRevert(activePool.setCollStakingManagerAddress(collStakingManager.address, {from: user}));
+      await assertRevert(activePool.setCollStakingManagerAddress(collStakingManager.address, { from: user }));
     })
 
     it("ActivePool: receivedERC20() called for supported tokens, then stake collaterals to Staking Manager", async () => {
@@ -80,7 +80,7 @@ contract('CollStakingManager', async accounts => {
       collateral.transfer(activePool.address, dec(10, 18))
       const recevivedERC20Data = th.getTransactionData('receivedERC20(address,uint256)', [collateral.address, dec(10, 18)])
       await mockBorrowerOperations.forward(activePool.address, recevivedERC20Data)
-      
+
       const sendAssetData = th.getTransactionData('sendAsset(address,address,uint256)', [collateral.address, user, dec(10, 18)])
       const tx = await mockBorrowerOperations.forward(activePool.address, sendAssetData)
       assert.isTrue(tx.receipt.status)
@@ -99,7 +99,7 @@ contract('CollStakingManager', async accounts => {
 
       await collStakingManager.setSupportedTokens(collateral.address, true)
       await mockBorrowerOperations.forward(activePool.address, recevivedERC20Data)
-      
+
       const sendAssetData = th.getTransactionData('sendAsset(address,address,uint256)', [collateral.address, user, dec(15, 18)])
       const tx = await mockBorrowerOperations.forward(activePool.address, sendAssetData)
       assert.isTrue(tx.receipt.status)
@@ -108,9 +108,9 @@ contract('CollStakingManager', async accounts => {
       assert.equal(await collateral.balanceOf(activePool.address), 0)
       assert.equal(await collateral.balanceOf(user), dec(15, 18))
     })
-    
+
     it("ActivePool: forceStake() can be called by admin only", async () => {
-      await assertRevert(activePool.forceStake(collateral.address, {from: user}))
+      await assertRevert(activePool.forceStake(collateral.address, { from: user }))
     })
 
     it("ActivePool: forceStake() stakes all current balance", async () => {
@@ -124,13 +124,13 @@ contract('CollStakingManager', async accounts => {
       await mockBorrowerOperations.forward(activePool.address, recevivedERC20Data)
 
       await activePool.forceStake(collateral.address);
-      
+
       assert.equal(await collateral.balanceOf(collStakingManager.address), dec(20, 18))
       assert.equal(await collateral.balanceOf(activePool.address), 0)
     })
 
     it("ActivePool: forceUnstake() can be called by admin only", async () => {
-      await assertRevert(activePool.forceUnstake(collateral.address, {from: user}))
+      await assertRevert(activePool.forceUnstake(collateral.address, { from: user }))
     })
 
     it("ActivePool: forceUnstake() unstakes all current staking", async () => {
@@ -140,7 +140,7 @@ contract('CollStakingManager', async accounts => {
       await mockBorrowerOperations.forward(activePool.address, recevivedERC20Data)
 
       await activePool.forceUnstake(collateral.address);
-      
+
       assert.equal(await collateral.balanceOf(collStakingManager.address), 0)
       assert.equal(await collateral.balanceOf(activePool.address), dec(10, 18))
     })
